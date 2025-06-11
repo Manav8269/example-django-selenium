@@ -1,0 +1,74 @@
+name: CI/CD – Semgrep, Django & Java Selenium
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'  # Daily Semgrep scan
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: 🛡️ semgrep scan
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - run: semgrep ci --sarif --output=semgrep.sarif
+        env:
+          SEMGREP_RULES: p/default
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: semgrep.sarif
+        if: always()
+
+  test-and-deploy:
+    name: 🧪 Test & deploy
+    needs: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Django migrations
+        working-directory: todoapp
+        run: python manage.py migrate
+
+      - name: Run Django tests
+        working-directory: todoapp
+        run: python manage.py test
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Run Java Selenium UI tests
+        working-directory: selenium_tests
+        run: mvn clean test
+
+      - name: Deploy to Production 🔼
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        run: |
+          echo "✅ All checks passed. Deploying..."
+          # Insert your deploy commands here
+          # e.g., SSH into server and restart, Docker push, etc.
